@@ -1,0 +1,11 @@
+numpy
+pillow
+pyautogui
+pydirectinput
+pygetwindow
+pyinstaller
+keyboard
+mouse
+pywin32
+mss
+requests

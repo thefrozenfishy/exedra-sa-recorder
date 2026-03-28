@@ -1,0 +1,6 @@
+.venv
+build
+debug/
+recorded_sequences/
+dist
+*_scores/
