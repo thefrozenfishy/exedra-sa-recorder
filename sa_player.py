@@ -1,6 +1,8 @@
+import argparse
 import colorsys
 import logging
 import os
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -35,6 +37,24 @@ def check_git_version_match():
                 )
     except Exception:
         logger.error("Failed to get git version")
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="SA Player")
+    parser.add_argument(
+        "-r",
+        "--record",
+        action="store_true",
+        help="Start directly in record mode",
+    )
+    parser.add_argument(
+        "-e",
+        "--execute",
+        type=str,
+        metavar="SEQ",
+        help="Execute a specific sequence (without .txt)",
+    )
+    return parser.parse_args()
 
 
 click_boxes = {}
@@ -94,7 +114,6 @@ def on_click_event():
         line = f"{name}, {delta:.2f}\n"
     else:
         logger.warning("Clicked outside of defined boxes at %s, %s", *name)
-        # TODO Save click in screen on bosses etc to change target
         return
 
     RECORD_FILE.write(line)
@@ -103,9 +122,28 @@ def on_click_event():
     logger.debug("Recorded: %s", line.strip())
 
 
-keyboard.add_hotkey("ctrl+shift+q", lambda: os._exit(0))
+def on_write_event(button):
+    global LAST_CLICK_TIME
+
+    if not LAST_CLICK_TIME or not RECORD_FILE:
+        return
+
+    now = time.monotonic()
+    delta = now - LAST_CLICK_TIME
+    LAST_CLICK_TIME = now
+    line = f"{button}, {delta:.2f}\n"
+
+    RECORD_FILE.write(line)
+    RECORD_FILE.flush()
+
+    logger.debug("Recorded: %s", line.strip())
+
+
+keyboard.add_hotkey("ctrl+shift+x", lambda: os._exit(0))
 keyboard.add_hotkey("ctrl+shift+p", take_debug_screenshot)
 mouse.on_click(on_click_event)
+keyboard.on_press_key("e", lambda _: on_write_event("e"))
+keyboard.on_press_key("q", lambda _: on_write_event("q"))
 
 log_formatter = logging.Formatter(
     "%(asctime)s - %(levelname)s - %(message)s", "%Y-%m-%d %H:%M:%S"
@@ -154,7 +192,7 @@ def click(pos: str, sleep: str):
 
     if DEBUG:
         os.makedirs(f"debug/steps/{TARGET_RUN}/", exist_ok=True)
-        img.save(f"debug/steps/{TARGET_RUN}/{STEP_IDX:04}_{pos}.png")
+        img.save(f"debug/steps/{TARGET_RUN}/{STEP_IDX:03}_{pos}.png")
 
     pyautogui.sleep(float(sleep))
     curr = pyautogui.position()
@@ -214,6 +252,13 @@ The OCR has to 'see' the content of the game to determine what to do.""",
             int(client_bottom - 0.1 * client_height),
         )
     for i in range(5):
+        click_boxes[f"u{i}alive"] = (
+            int(client_left + (1.1 + i) * client_width // 9),
+            int(client_bottom - 0.25 * client_height),
+            int(client_left + (1.5 + i) * client_width // 9),
+            int(client_bottom - 0.15 * client_height),
+        )
+    for i in range(5):
         click_boxes[f"u{i}u"] = (
             int(client_left + (1.5 + i) * client_width // 9),
             int(client_bottom - 0.24 * client_height),
@@ -228,6 +273,14 @@ The OCR has to 'see' the content of the game to determine what to do.""",
                 int(client_left + (0.11 + 0.018 * j + 0.113 * i) * client_width),
                 int(client_bottom - 0.08 * client_height),
             )
+
+    for i in range(5):
+        click_boxes[f"u{i}hp"] = (
+            int(client_left + (0.1 + 0.113 * i) * client_width),
+            int(client_bottom - 0.13 * client_height),
+            int(client_left + (0.11 + 0.113 * i) * client_width),
+            int(client_bottom - 0.12 * client_height),
+        )
     click_boxes["bs"] = (
         client_left + 0.89 * client_width,
         client_top + 0.65 * client_height,
@@ -262,6 +315,27 @@ The OCR has to 'see' the content of the game to determine what to do.""",
         take_debug_screenshot()
 
 
+def is_curr_hp_colour(user_idx: str, colour: str) -> bool:
+    colour_img = grab_region(click_boxes[f"u{user_idx}hp"])
+    arr = np.array(colour_img).astype(float) / 255.0
+    avg_rgb = arr.mean(axis=(0, 1))  # [R, G, B] normalized
+    r, g, b = avg_rgb
+    logger.debug("HP colour for user %s: R=%.2f, G=%.2f, B=%.2f", user_idx, r, g, b)
+    if DEBUG:
+        os.makedirs(f"debug/hp/{colour}", exist_ok=True)
+        colour_img.save(f"debug/hp/{colour}_{r:.2f}_{g:.2f}_{b:.2f}.png")
+    if colour == "red" and r > 0.8 and g < 0.4 and b < 0.4:
+        return True
+    if colour == "red" and r < 0.2 and g < 0.2 and b < 0.2:
+        # Consider dead or almost dead for red
+        return True
+    if colour == "yellow" and r > 0.7 and g > 0.6 and b < 0.4:
+        return True
+    if colour == "green" and r < 0.7 and g > 0.7 and b < 0.4:
+        return True
+    return False
+
+
 def is_aliment(user_idx: str, stat_idx: int, ailment: str) -> bool:
     colour_img = grab_region(click_boxes[f"u{user_idx}a{stat_idx}"])
     arr = np.array(colour_img).astype(float) / 255.0
@@ -292,59 +366,120 @@ def has_ult(user_idx):
     return has_ultimate
 
 
+def is_alive(user_idx):
+    colour_img = grab_region(click_boxes[f"u{user_idx}alive"])
+    arr = np.array(colour_img).astype(float) / 255.0
+    avg_rgb = arr.mean(axis=(0, 1))
+    r, g, b = avg_rgb
+    h, s, v = colorsys.rgb_to_hsv(r, g, b)
+
+    _is_alive = v > 0.5
+    if DEBUG:
+        os.makedirs("debug/is_alive", exist_ok=True)
+        colour_img.save(f"debug/is_alive/{_is_alive}_{h:.2f}_{s:.2f}_{v:.2f}.png")
+    return _is_alive
+
+
+_AILMENT_RE = re.compile(r"^(curse|poison)(\d+)(<)(\d+)$")
+_ULT_RE = re.compile(r"^ult(\d+)$")
+_ALIVE_RE = re.compile(r"^alive(\d+)$")
+_HP_RE = re.compile(r"^hp(\d+)(red|yellow|green)$")
+
+
 def is_cond_true(cond: str) -> bool:
-    tested = False
-    for ailment in ("curse", "poison"):
-        if cond.startswith(ailment):
-            tested = True
-            char, comparator, amount = cond.strip(ailment)
-            applied = 0
-            if comparator == "<":
-                for i in range(4):
-                    applied += is_aliment(char, i, ailment)
-                if applied >= int(amount):
-                    logger.info("Cond is false, %s", cond)
-                    return False
-            else:
-                logger.error("Unknown comparator %s", cond)
-    for test in ("ult",):
-        if cond.startswith(test):
-            tested = True
-            char_idx = cond.strip(test)
-            if not has_ult(char_idx):
-                logger.info("Cond is false, %s", cond)
+    cond = cond.strip()
+
+    if m := _AILMENT_RE.match(cond):
+        ailment, char_idx, comparator, amount = (
+            m.group(1),
+            m.group(2),
+            m.group(3),
+            int(m.group(4)),
+        )
+        if comparator == "<":
+            applied = sum(is_aliment(char_idx, i, ailment) for i in range(4))
+            if applied >= amount:
+                logger.info(
+                    "Cond is false (ailment): %s — applied=%d, threshold=%d",
+                    cond,
+                    applied,
+                    amount,
+                )
                 return False
+            return True
+        else:
+            logger.error("Unknown comparator '%s' in condition: %s", comparator, cond)
+            return False
 
-    if not tested:
-        logger.error("Unknown condition %s", cond)
-        return False
-    return True
+    if m := _ULT_RE.match(cond):
+        char_idx = m.group(1)
+        if not has_ult(char_idx):
+            logger.info("Cond is false (ult): %s", cond)
+            return False
+        return True
+
+    if m := _ALIVE_RE.match(cond):
+        char_idx = m.group(1)
+        if not is_alive(char_idx):
+            logger.info("Cond is false (alive): %s", cond)
+            return False
+        return True
+
+    if m := _HP_RE.match(cond):
+        char_idx, colour = m.group(1), m.group(2)
+        if not is_curr_hp_colour(char_idx, colour):
+            logger.info("Cond is false (hp): %s", cond)
+            return False
+        return True
+
+    logger.error("Unknown condition format: '%s'", cond)
+    return False
 
 
-def execute_seq(seq):
+def execute_seq(seq) -> tuple[bool, bool]:
     """Returns true if should halt"""
     logger.info("Starting sequence execution")
     setup_text_locations(True)
     pyautogui.sleep(1)
 
-    for line in seq:
-        line = line.split("#", 1)[0].strip()
+    for i, line in enumerate(seq):
+        l = line.split("#", 1)
+        if len(l) == 2:
+            line, comment = [s.strip() for s in line.split("#", 1)]
+        else:
+            line = line.strip()
+            comment = ""
         if not line:
+            logger.debug("Comment%3d: %s", i + 1, comment)
             # Use # for comments
             continue
         if "," in line:
             action, wait, *other = [a.strip() for a in line.split(",")]
         else:
             action, wait, other = line, "5", []
-        logger.debug("Action %s, Wait %s", action, wait)
+        action = action.lower()
+        logger.debug("Action %3d: %4s - %5s %s", i + 1, action, wait, comment)
         match action:
-            case "STOP":
+            case "stop":
                 logger.info("Found stop, stopping")
-                return True
+                return True, False
+            case "sc":
+                img = grab_region(click_boxes["screen"])
+                os.makedirs(f"{TARGET_RUN}_scores/{other[0]}", exist_ok=True)
+                i = 0
+                for j in range(1000):
+                    if not Path(f"{TARGET_RUN}_scores/{other[0]}/{j:03}.png").is_file():
+                        i = j
+                        break
+                img.save(f"{TARGET_RUN}_scores/{other[0]}/{i:03}.png")
+                logger.info("Took screenshot in %s, nr %d", other[0], i)
+            case "pause":
+                input("Sequence paused. Press Enter to continue...")
+                logger.info("Continuing after pause")
             case "bss":
                 # Shorthand for bs bs if done manually
-                click("bs", "0.1")
                 click("bs", wait)
+                click("bs", "0.3")
             case "u0s" | "u1s" | "u2s" | "u3s" | "u4s" | "ba" | "bs":
                 # Select action (uX is ult use)
                 click(action, wait)
@@ -352,32 +487,37 @@ def execute_seq(seq):
                 # Shorthand for uXs ba if done manually
                 click(f"{action}s", wait)
                 click("ba", "3")
+            case "e" | "q":
+                pyautogui.sleep(float(wait))
+                pydirectinput.press(action)
             case "cond":
                 pyautogui.sleep(float(wait))
                 if any(not is_cond_true(cond) for cond in other):
-                    return
+                    return False, False
             case _:
                 logger.error("unknown action [%s]", action)
+    return False, True
 
 
-def reset_after_run():
+def reset_after_run(take_pic: bool):
     logger.info("Resetting")
     pyautogui.sleep(15)
-    img = grab_region(click_boxes["screen"])
-    os.makedirs(f"{TARGET_RUN}_scores", exist_ok=True)
-    i = 0
-    for j in range(1000):
-        if not Path(f"{TARGET_RUN}_scores/{j:03}.png").is_file():
-            i = j
-            break
-    img.save(f"{TARGET_RUN}_scores/{i:03}.png")
+    if take_pic:
+        img = grab_region(click_boxes["screen"])
+        os.makedirs(f"{TARGET_RUN}_scores", exist_ok=True)
+        i = 0
+        for j in range(1000):
+            if not Path(f"{TARGET_RUN}_scores/{j:03}.png").is_file():
+                i = j
+                break
+        img.save(f"{TARGET_RUN}_scores/{i:03}.png")
     click("retry_after_win", "1")
     click("retry_after_win", "1")
     click("pause", "1")
     click("retry_in_pause", "1")
     click("retry_in_pause_ok", "1")
     click("retry_in_pause_ok", "10")
-    pyautogui.sleep(5)
+    pyautogui.sleep(10)
 
 
 def get_state() -> str:
@@ -431,38 +571,57 @@ def fetch_target_run() -> str:
 
 def main():
     global LAST_CLICK_TIME, RECORD_FILE, STEP_IDX, TARGET_RUN
-    state = get_state()
+
     setup_text_locations(False)
+
+    args = parse_args()
+    if args.record:
+        state = "record"
+    elif args.execute:
+        state = "execute"
+        TARGET_RUN = args.execute
+    else:
+        state = get_state()
+
     if DEBUG:
         take_debug_screenshot()
+
     logger.info(
         "Setup complete, ready to execute or record sequences. At any moment press ctrl+shift+q to quit"
     )
+
     while True:
         if state == "execute":
             STEP_IDX = 0
-            TARGET_RUN = fetch_target_run()
+
+            if not args.execute:
+                TARGET_RUN = fetch_target_run()
+
+            path = Path(f"recorded_sequences/{TARGET_RUN}.txt")
+            if not path.is_file():
+                logger.error("Sequence '%s.txt' not found.", TARGET_RUN)
+                return
+
             while True:
-                with open(
-                    f"recorded_sequences/{TARGET_RUN}.txt", "r", encoding="utf-8"
-                ) as f:
+                with open(path, "r", encoding="utf-8") as f:
                     seq = f.readlines()
-                if execute_seq(seq):
+                stop, take_pic = execute_seq(seq)
+                if stop:
                     break
-                reset_after_run()
+                reset_after_run(take_pic)
+
         elif state == "record":
             file_name = (
                 f"recorded_sequences/{datetime.now().strftime('%Y-%m-%dT%H-%M-%S')}.txt"
             )
             logger.info("Starting recording. Recording will be saved as %s.", file_name)
+
             LAST_CLICK_TIME = time.monotonic()
-            RECORD_FILE = open(
-                file_name,
-                "w",
-                encoding="utf-8",
-            )
+            RECORD_FILE = open(file_name, "w", encoding="utf-8")
+
             while True:
                 pyautogui.sleep(1)
+        state = get_state()
 
 
 if __name__ == "__main__":
