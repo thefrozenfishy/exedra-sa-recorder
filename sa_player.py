@@ -438,7 +438,7 @@ def is_cond_true(cond: str) -> bool:
 
 def execute_seq(seq) -> tuple[bool, bool]:
     """Returns true if should halt"""
-    logger.info("Starting sequence execution")
+    logger.info("Starting sequence execution %s", TARGET_RUN)
     setup_text_locations(True)
     pyautogui.sleep(1)
 
@@ -496,12 +496,12 @@ def execute_seq(seq) -> tuple[bool, bool]:
                     return False, False
             case _:
                 logger.error("unknown action [%s]", action)
+    pyautogui.sleep(15)
     return False, True
 
 
 def reset_after_run(take_pic: bool):
     logger.info("Resetting")
-    pyautogui.sleep(15)
     if take_pic:
         img = grab_region(click_boxes["screen"])
         os.makedirs(f"{TARGET_RUN}_scores", exist_ok=True)
