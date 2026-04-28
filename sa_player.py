@@ -496,7 +496,16 @@ def execute_seq(seq) -> tuple[bool, bool]:
                     return False, False
             case _:
                 logger.error("unknown action [%s]", action)
-    pyautogui.sleep(15)
+    pyautogui.sleep(1.1)
+    img = grab_region(click_boxes["screen"])
+    os.makedirs(f"{TARGET_RUN}_scores", exist_ok=True)
+    i = 0
+    for j in range(1000):
+        if not Path(f"{TARGET_RUN}_scores/{j:03}.png").is_file():
+            i = j
+            break
+    img.save(f"{TARGET_RUN}_scores/{i:03}_d.png")
+    pyautogui.sleep(14)
     return False, True
 
 
