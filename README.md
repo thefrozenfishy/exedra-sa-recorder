@@ -83,7 +83,7 @@ cond, 1, ult2 # Wait one second, then check that unit 2 has ultimate ready
 
 #### `hp<X><colour>` — Unit HP bar colour
 
-Passes if unit X HP bar matches the specified colour. Colours may be one of `red`, `yellow`, or `green`.
+Passes if unit X HP bar matches the specified colour. Colours may be one of `red`, `yellow`, or `green`. Do note even "black" hp (down to 1 hp) is red. If you want to check if a character is alive or not use the alive cond.
 
 ```txt
 cond, 0.5, hp0red, hp4yellow # Unit 0 has red hp, unit 4 has yellow hp

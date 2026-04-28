@@ -580,6 +580,8 @@ def fetch_target_run() -> str:
 
 def main():
     global LAST_CLICK_TIME, RECORD_FILE, STEP_IDX, TARGET_RUN
+    sequences_dir = Path("recorded_sequences")
+    sequences_dir.mkdir(exist_ok=True)
 
     setup_text_locations(False)
 
