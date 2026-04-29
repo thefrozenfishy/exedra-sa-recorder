@@ -62,6 +62,7 @@ click_boxes = {}
 TARGET_RUN = "default"
 STEP_IDX = 0
 DEBUG = True
+STEP_DEBUG = False
 LAST_CLICK_TIME = None
 RECORD_FILE = None
 
@@ -190,7 +191,7 @@ def click(pos: str, sleep: str):
         width=10,
     )
 
-    if DEBUG:
+    if DEBUG and STEP_DEBUG:
         os.makedirs(f"debug/steps/{TARGET_RUN}/", exist_ok=True)
         img.save(f"debug/steps/{TARGET_RUN}/{STEP_IDX:03}_{pos}.png")
 
