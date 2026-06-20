@@ -238,8 +238,8 @@ The OCR has to 'see' the content of the game to determine what to do.""",
         )
     hwnd = win._hWnd
     client_rect = win32gui.GetClientRect(hwnd)
-    (client_left, client_top) = win32gui.ClientToScreen(hwnd, (0, 0))
-    (client_right, client_bottom) = win32gui.ClientToScreen(
+    client_left, client_top = win32gui.ClientToScreen(hwnd, (0, 0))
+    client_right, client_bottom = win32gui.ClientToScreen(
         hwnd, (client_rect[2], client_rect[3])
     )
     client_width = client_right - client_left
@@ -293,6 +293,12 @@ The OCR has to 'see' the content of the game to determine what to do.""",
         client_top + 0.7 * client_height,
         client_left + 0.88 * client_width,
         client_top + 0.9 * client_height,
+    )
+    click_boxes["esc"] = (
+        client_left + 0.93 * client_width,
+        client_top + 0.79 * client_height,
+        client_left + 0.975 * client_width,
+        client_top + 0.87 * client_height,
     )
 
     click_boxes["retry_after_win"] = (
@@ -437,10 +443,13 @@ def is_cond_true(cond: str) -> bool:
     return False
 
 
-def execute_seq(seq) -> tuple[bool, bool]:
+def execute_seq(seq: list[str]) -> tuple[bool, bool]:
     """Returns true if should halt"""
     logger.info("Starting sequence execution %s", TARGET_RUN)
     setup_text_locations(True)
+    os.makedirs(f"{TARGET_RUN}_scores", exist_ok=True)
+    with open(f"{TARGET_RUN}_scores/run.txt", "w", encoding="utf-8") as f:
+        f.writelines(seq)
     pyautogui.sleep(1)
 
     for i, line in enumerate(seq):
@@ -481,7 +490,7 @@ def execute_seq(seq) -> tuple[bool, bool]:
                 # Shorthand for bs bs if done manually
                 click("bs", wait)
                 click("bs", "0.3")
-            case "u0s" | "u1s" | "u2s" | "u3s" | "u4s" | "ba" | "bs":
+            case "u0s" | "u1s" | "u2s" | "u3s" | "u4s" | "ba" | "bs" | "esc":
                 # Select action (uX is ult use)
                 click(action, wait)
             case "u0" | "u1" | "u2" | "u3" | "u4":
