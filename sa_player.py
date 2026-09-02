@@ -111,6 +111,8 @@ def on_click_event():
     now = time.monotonic()
     delta = now - LAST_CLICK_TIME
     LAST_CLICK_TIME = now
+    if name in ("ba", "bs"):
+        delta = max(1, delta)
     if isinstance(name, str):
         line = f"{name}, {delta:.2f}\n"
     else:
@@ -130,7 +132,7 @@ def on_write_event(button):
         return
 
     now = time.monotonic()
-    delta = now - LAST_CLICK_TIME
+    delta = max(1, now - LAST_CLICK_TIME)
     LAST_CLICK_TIME = now
     line = f"{button}, {delta:.2f}\n"
 
@@ -445,7 +447,21 @@ def is_cond_true(cond: str) -> bool:
 
 def execute_seq(seq: list[str]) -> tuple[bool, bool]:
     """Returns true if should halt"""
-    logger.info("Starting sequence execution %s", TARGET_RUN)
+    total_time = 0
+    for s in seq:
+        tim = s.split("#", 1)[0].split(",")
+        if not tim:
+            continue
+        if len(tim) < 2:
+            total_time += 5
+        else:
+            total_time += float(tim[1].strip())
+
+    logger.info(
+        "Starting sequence execution %s which will run for %d seconds",
+        TARGET_RUN,
+        total_time,
+    )
     setup_text_locations(True)
     os.makedirs(f"{TARGET_RUN}_scores", exist_ok=True)
     with open(f"{TARGET_RUN}_scores/run.txt", "w", encoding="utf-8") as f:
