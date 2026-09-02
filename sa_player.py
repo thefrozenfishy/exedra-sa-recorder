@@ -54,6 +54,13 @@ def parse_args():
         metavar="SEQ",
         help="Execute a specific sequence (without .txt)",
     )
+    parser.add_argument(
+        "-c",
+        "--crisis",
+        action="store_true",
+        default=False,
+        help="Run in Crisis mode (Same as crisis in sequence name)",
+    )
     return parser.parse_args()
 
 
@@ -250,9 +257,9 @@ The OCR has to 'see' the content of the game to determine what to do.""",
     for i in range(5):
         click_boxes[f"u{i}s"] = (
             int(client_left + (0.9 + i) * client_width // 9),
-            int(client_bottom - 0.35 * client_height),
+            int(client_bottom - 0.30 * client_height),
             int(client_left + (1.6 + i) * client_width // 9),
-            int(client_bottom - 0.1 * client_height),
+            int(client_bottom - 0.11 * client_height),
         )
     for i in range(5):
         click_boxes[f"u{i}alive"] = (
@@ -264,52 +271,53 @@ The OCR has to 'see' the content of the game to determine what to do.""",
     for i in range(5):
         click_boxes[f"u{i}u"] = (
             int(client_left + (1.5 + i) * client_width // 9),
-            int(client_bottom - 0.24 * client_height),
+            int(client_bottom - 0.21 * client_height),
             int(client_left + (1.7 + i) * client_width // 9),
-            int(client_bottom - 0.20 * client_height),
+            int(client_bottom - 0.17 * client_height),
         )
+
     for i in range(5):
         for j in range(4):
             click_boxes[f"u{i}a{j}"] = (
                 int(client_left + (0.095 + 0.018 * j + 0.113 * i) * client_width),
-                int(client_bottom - 0.1 * client_height),
+                int(client_bottom - 0.075 * client_height),
                 int(client_left + (0.11 + 0.018 * j + 0.113 * i) * client_width),
-                int(client_bottom - 0.08 * client_height),
+                int(client_bottom - 0.055 * client_height),
             )
 
     for i in range(5):
         click_boxes[f"u{i}hp"] = (
             int(client_left + (0.1 + 0.113 * i) * client_width),
-            int(client_bottom - 0.13 * client_height),
-            int(client_left + (0.11 + 0.113 * i) * client_width),
-            int(client_bottom - 0.12 * client_height),
+            int(client_bottom - 0.105 * client_height),
+            int(client_left + (0.105 + 0.113 * i) * client_width),
+            int(client_bottom - 0.095 * client_height),
         )
     click_boxes["bs"] = (
         client_left + 0.89 * client_width,
-        client_top + 0.65 * client_height,
+        client_top + 0.68 * client_height,
         client_left + 0.96 * client_width,
-        client_top + 0.78 * client_height,
+        client_top + 0.81 * client_height,
     )
     click_boxes["ba"] = (
         client_left + 0.77 * client_width,
-        client_top + 0.7 * client_height,
+        client_top + 0.73 * client_height,
         client_left + 0.88 * client_width,
-        client_top + 0.9 * client_height,
+        client_top + 0.93 * client_height,
     )
     click_boxes["esc"] = (
         client_left + 0.93 * client_width,
-        client_top + 0.79 * client_height,
+        client_top + 0.83 * client_height,
         client_left + 0.975 * client_width,
-        client_top + 0.87 * client_height,
+        client_top + 0.91 * client_height,
     )
 
     click_boxes["retry_after_win"] = (
         client_left + 0.9 * client_width,
-        client_top + 0.85 * client_height,
+        client_top + 0.95 * client_height,
     )
     click_boxes["retry_in_pause"] = (
         client_left + 0.49 * client_width,
-        client_top + 0.80 * client_height,
+        client_top + 0.90 * client_height,
     )
     click_boxes["retry_in_pause_ok"] = (
         client_left + 0.6 * client_width,
@@ -329,27 +337,42 @@ def is_curr_hp_colour(user_idx: str, colour: str) -> bool:
     arr = np.array(colour_img).astype(float) / 255.0
     avg_rgb = arr.mean(axis=(0, 1))  # [R, G, B] normalized
     r, g, b = avg_rgb
-    logger.debug("HP colour for user %s: R=%.2f, G=%.2f, B=%.2f", user_idx, r, g, b)
+    detected_colour = None
+    if r > 0.8 and g < 0.4 and b < 0.4:
+        detected_colour = "red"
+    elif r < 0.2 and g < 0.2 and b < 0.2:
+        detected_colour = "red"
+    elif r > 0.7 and g > 0.6 and b < 0.4:
+        detected_colour = "yellow"
+    elif r < 0.7 and g > 0.7 and b < 0.4:
+        detected_colour = "green"
+    logger.debug(
+        "HP colour for user %s: R=%.2f, G=%.2f, B=%.2f. Wanted %s found %s",
+        user_idx,
+        r,
+        g,
+        b,
+        colour,
+        detected_colour,
+    )
     if DEBUG:
         os.makedirs(f"debug/hp/{colour}", exist_ok=True)
         colour_img.save(f"debug/hp/{colour}_{r:.2f}_{g:.2f}_{b:.2f}.png")
-    if colour == "red" and r > 0.8 and g < 0.4 and b < 0.4:
-        return True
-    if colour == "red" and r < 0.2 and g < 0.2 and b < 0.2:
-        # Consider dead or almost dead for red
-        return True
-    if colour == "yellow" and r > 0.7 and g > 0.6 and b < 0.4:
-        return True
-    if colour == "green" and r < 0.7 and g > 0.7 and b < 0.4:
-        return True
-    return False
+    return colour == detected_colour
 
 
-def is_aliment(user_idx: str, stat_idx: int, ailment: str) -> bool:
+def is_ailment(user_idx: str, stat_idx: int, ailment: str) -> bool:
     colour_img = grab_region(click_boxes[f"u{user_idx}a{stat_idx}"])
     arr = np.array(colour_img).astype(float) / 255.0
     avg_rgb = arr.mean(axis=(0, 1))  # [R, G, B] normalized
     r, g, b = avg_rgb
+    logger.debug(
+        "Ailment colour for user %s: R=%.2f, G=%.2f, B=%.2f",
+        user_idx,
+        r,
+        g,
+        b,
+    )
     ailment_char = "_"
     if ailment == "curse" and 0.45 < r < 0.55 and 0.40 < g < 0.55 and 0.45 < b < 0.60:
         ailment_char = "c"
@@ -366,8 +389,17 @@ def has_ult(user_idx):
     avg_rgb = arr.mean(axis=(0, 1))  # [R, G, B] normalized
     r, g, b = avg_rgb
     h, s, v = colorsys.rgb_to_hsv(r, g, b)
-
-    has_ultimate = v > 0.85
+    logger.debug(
+        "Ult colour for user %s: R=%.2f, G=%.2f, B=%.2f, H=%.2f, S=%.2f, V=%.2f",
+        user_idx,
+        r,
+        g,
+        b,
+        h,
+        s,
+        v,
+    )
+    has_ultimate = v > 0.80
     if DEBUG:
         os.makedirs("debug/has_ult", exist_ok=True)
         colour_img.save(f"debug/has_ult/{has_ultimate}_{h:.2f}_{s:.2f}_{v:.2f}.png")
@@ -381,7 +413,16 @@ def is_alive(user_idx):
     avg_rgb = arr.mean(axis=(0, 1))
     r, g, b = avg_rgb
     h, s, v = colorsys.rgb_to_hsv(r, g, b)
-
+    logger.debug(
+        "Alive colour for user %s: R=%.2f, G=%.2f, B=%.2f, H=%.2f, S=%.2f, V=%.2f",
+        user_idx,
+        r,
+        g,
+        b,
+        h,
+        s,
+        v,
+    )
     _is_alive = v > 0.5
     if DEBUG:
         os.makedirs("debug/is_alive", exist_ok=True)
@@ -406,7 +447,7 @@ def is_cond_true(cond: str) -> bool:
             int(m.group(4)),
         )
         if comparator == "<":
-            applied = sum(is_aliment(char_idx, i, ailment) for i in range(4))
+            applied = sum(is_ailment(char_idx, i, ailment) for i in range(4))
             if applied >= amount:
                 logger.info(
                     "Cond is false (ailment): %s — applied=%d, threshold=%d",
@@ -516,9 +557,13 @@ def execute_seq(seq: list[str]) -> tuple[bool, bool]:
             case "e" | "q":
                 pyautogui.sleep(float(wait))
                 pydirectinput.press(action)
-            case "cond":
+            case "cond" | "condinv":
                 pyautogui.sleep(float(wait))
-                if any(not is_cond_true(cond) for cond in other):
+                has_false = any(not is_cond_true(cond) for cond in other)
+                if action == "cond":
+                    if has_false:
+                        return False, False
+                elif not has_false:  # Inverse of cond
                     return False, False
             case _:
                 logger.error("unknown action [%s]", action)
@@ -535,7 +580,7 @@ def execute_seq(seq: list[str]) -> tuple[bool, bool]:
     return False, True
 
 
-def reset_after_run(take_pic: bool):
+def reset_after_score_attack_run(take_pic: bool):
     logger.info("Resetting")
     if take_pic:
         img = grab_region(click_boxes["screen"])
@@ -552,6 +597,15 @@ def reset_after_run(take_pic: bool):
     click("retry_in_pause", "1")
     click("retry_in_pause_ok", "1")
     click("retry_in_pause_ok", "10")
+    pyautogui.sleep(10)
+
+
+def reset_bad_crisis_run():
+    logger.info("Resetting")
+    click("pause", "1")
+    click("retry_in_pause", "1")
+    click("retry_in_pause_ok", "1")
+    click("retry_in_pause_ok", "2")
     pyautogui.sleep(10)
 
 
@@ -626,6 +680,8 @@ def main():
     logger.info(
         "Setup complete, ready to execute or record sequences. At any moment press ctrl+shift+q to quit"
     )
+    crisis = "crisis" in TARGET_RUN.lower() or args.crisis
+    logger.info("Running in %s mode", "crisis" if crisis else "score attack")
 
     while True:
         if state == "execute":
@@ -642,10 +698,16 @@ def main():
             while True:
                 with open(path, "r", encoding="utf-8") as f:
                     seq = f.readlines()
-                stop, take_pic = execute_seq(seq)
-                if stop:
-                    break
-                reset_after_run(take_pic)
+                stop, run_done = execute_seq(seq)
+                if crisis:
+                    if run_done:
+                        logger.info("Seq completed")
+                        break
+                    reset_bad_crisis_run()
+                else:
+                    if stop:
+                        break
+                    reset_after_score_attack_run(run_done)
 
         elif state == "record":
             file_name = (

@@ -27,6 +27,12 @@ action, wait, param1, param2, ...
 
 ---
 
+## Crisis
+
+To make the program run in crisis mode, use the ``--crisis`` flag, or simply name the sequence file something with crisis in the name. In this mode the execution will automatically stop once the file has been read through without any cond resetting it
+
+---
+
 ## Actions
 
 The leftmost unit is 0, rightmost is 4
@@ -105,4 +111,12 @@ You can chain multiple conditions on one `cond` line — all must be true to pro
 
 ```txt
 cond, 1, ult0, ult2, hp1red, alive4 # Wait 1 sec then check that units 0 and 2 has ultimate, unit 1 has red hp, and unit4 is alive
+```
+
+### Inverse condition
+
+``condinv`` works identically to ``cond``, but is used to check the inverse.
+
+```txt
+condinv, 1, ult0 # Wait 1 sec then check that units 0 does not have ultimate
 ```
