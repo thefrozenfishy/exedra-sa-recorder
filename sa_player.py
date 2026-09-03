@@ -1,6 +1,7 @@
 import argparse
 import colorsys
 import logging
+import operator
 import os
 import re
 import sys
@@ -8,6 +9,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import cv2
 import keyboard
 import mouse
 import mss
@@ -15,6 +17,7 @@ import numpy as np
 import pyautogui
 import pydirectinput
 import pygetwindow
+import pytesseract
 import win32gui
 from PIL import Image, ImageDraw
 from requests import get
@@ -437,6 +440,39 @@ def is_curr_hp_colour(user_idx: str, colour: str) -> bool:
     return colour == detected_colour
 
 
+def get_curr_hp_value(user_idx: str, bright_range: tuple[int, int] = (170, 235)) -> int:
+    """OCRs the numeric HP value shown under a character's portrait.
+
+    Uses a fixed brightness range (cv2.inRange) rather than Otsu, since Otsu
+    was found to misclassify digits on similar crops in link_raid_automation.
+    """
+    img = grab_region(click_boxes[f"u{user_idx}hptext"])
+    gray = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
+    h, w = gray.shape
+    up = cv2.resize(gray, (w * 4, h * 4), interpolation=cv2.INTER_CUBIC)
+    bw = cv2.inRange(up, *bright_range)
+
+    config = "--psm 7 -c tessedit_char_whitelist=0123456789"
+    try:
+        text = pytesseract.image_to_string(bw, config=config)
+    except pytesseract.TesseractNotFoundError as e:
+        logger.error(
+            "Tesseract is not in path! Download it and restart your pc and try again..."
+        )
+        raise e
+
+    digits = re.sub(r"[^0-9]", "", text)
+    value = int(digits) if digits else 0
+
+    logger.debug("HP value for user %s: OCR'd %r -> %d", user_idx, text.strip(), value)
+    if DEBUG:
+        os.makedirs("debug/hp_value", exist_ok=True)
+        img.save(f"debug/hp_value/{user_idx}_{value}_raw.png")
+        Image.fromarray(bw).save(f"debug/hp_value/{user_idx}_{value}_bw.png")
+
+    return value
+
+
 def is_ailment(user_idx: str, stat_idx: int, ailment: str) -> bool:
     colour_img = grab_region(click_boxes[f"u{user_idx}a{stat_idx}"])
     arr = np.array(colour_img).astype(float) / 255.0
@@ -510,6 +546,14 @@ _AILMENT_RE = re.compile(r"^(curse|poison)(\d+)(<)(\d+)$")
 _ULT_RE = re.compile(r"^ult(\d+)$")
 _ALIVE_RE = re.compile(r"^alive(\d+)$")
 _HP_RE = re.compile(r"^hp(\d+)(red|yellow|green)$")
+_HP_VAL_RE = re.compile(r"^hpval(\d+)(<=|>=|==|<|>)(\d+)$")
+_HP_VAL_OPS = {
+    "<": operator.lt,
+    ">": operator.gt,
+    "<=": operator.le,
+    ">=": operator.ge,
+    "==": operator.eq,
+}
 
 
 def is_cond_true(cond: str) -> bool:
@@ -555,6 +599,14 @@ def is_cond_true(cond: str) -> bool:
         char_idx, colour = m.group(1), m.group(2)
         if not is_curr_hp_colour(char_idx, colour):
             logger.info("Cond is false (hp): %s", cond)
+            return False
+        return True
+
+    if m := _HP_VAL_RE.match(cond):
+        char_idx, comparator, amount = m.group(1), m.group(2), int(m.group(3))
+        value = get_curr_hp_value(char_idx)
+        if not _HP_VAL_OPS[comparator](value, amount):
+            logger.info("Cond is false (hp value): %s — current=%d", cond, value)
             return False
         return True
 
@@ -796,14 +848,6 @@ def main():
             LAST_CLICK_TIME = time.monotonic()
             RECORD_FILE = open(file_name, "w", encoding="utf-8")
 
-            record_start = time.monotonic()
-            while True:
-                elapsed = time.monotonic() - record_start
-                sys.stdout.write(
-                    f"\r[recording] {elapsed:6.1f}s elapsed - press hotkeys to record actions"
-                )
-                sys.stdout.flush()
-                time.sleep(1)
         state = get_state()
 
 
