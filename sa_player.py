@@ -3,6 +3,7 @@ import colorsys
 import logging
 import os
 import re
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -175,6 +176,32 @@ if DEBUG:
     logger.addHandler(file_handler)
 
 
+def sleep_with_progress(seconds: float, label: str = "") -> None:
+    """Sleep for `seconds`, printing a live-updating "elapsed / total (pct%)"
+    line to the terminal, overwriting itself in place instead of scrolling."""
+    seconds = max(0.0, seconds)
+    start = time.monotonic()
+    end = start + seconds
+
+    if seconds == 0:
+        sys.stdout.write(f"\r{label}0.00s / 0.00s (100.0%)\n")
+        sys.stdout.flush()
+        return
+
+    while True:
+        now = time.monotonic()
+        elapsed = min(now - start, seconds)
+        pct = (elapsed / seconds) * 100
+        sys.stdout.write(f"\r{label}{elapsed:5.2f}s / {seconds:5.2f}s ({pct:5.1f}%)")
+        sys.stdout.flush()
+        if now >= end:
+            break
+        time.sleep(min(0.02, end - now))
+
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+
+
 def click(pos: str, sleep: str):
     global STEP_IDX
     if len(click_boxes[pos]) == 4:
@@ -204,7 +231,7 @@ def click(pos: str, sleep: str):
         os.makedirs(f"debug/steps/{TARGET_RUN}/", exist_ok=True)
         img.save(f"debug/steps/{TARGET_RUN}/{STEP_IDX:03}_{pos}.png")
 
-    pyautogui.sleep(float(sleep))
+    sleep_with_progress(float(sleep), label=f"[{pos}] ")
     curr = pyautogui.position()
     pydirectinput.click(int(x), int(y))
     pyautogui.moveTo(curr)
@@ -399,7 +426,7 @@ def has_ult(user_idx):
         s,
         v,
     )
-    has_ultimate = v > 0.80
+    has_ultimate = v >= 0.70
     if DEBUG:
         os.makedirs("debug/has_ult", exist_ok=True)
         colour_img.save(f"debug/has_ult/{has_ultimate}_{h:.2f}_{s:.2f}_{v:.2f}.png")
@@ -555,10 +582,10 @@ def execute_seq(seq: list[str]) -> tuple[bool, bool]:
                 click(f"{action}s", wait)
                 click("ba", "3")
             case "e" | "q":
-                pyautogui.sleep(float(wait))
+                sleep_with_progress(float(wait), label=f"[{action}] ")
                 pydirectinput.press(action)
             case "cond" | "condinv":
-                pyautogui.sleep(float(wait))
+                sleep_with_progress(float(wait), label=f"[{action}] ")
                 has_false = any(not is_cond_true(cond) for cond in other)
                 if action == "cond":
                     if has_false:
