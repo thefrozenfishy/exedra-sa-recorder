@@ -176,33 +176,72 @@ if DEBUG:
     logger.addHandler(file_handler)
 
 
-def sleep_with_progress(seconds: float, label: str = "") -> None:
-    """Sleep for `seconds`, printing a live-updating "elapsed / total (pct%)"
-    line to the terminal, overwriting itself in place instead of scrolling."""
-    seconds = max(0.0, seconds)
+def _run_with_ticks(seconds: float, render) -> None:
     start = time.monotonic()
     end = start + seconds
-
-    if seconds == 0:
-        sys.stdout.write(f"\r{label}0.00s / 0.00s (100.0%)\n")
-        sys.stdout.flush()
-        return
-
+    sys.stdout.write(render(0.0))
+    sys.stdout.flush()
     while True:
         now = time.monotonic()
         elapsed = min(now - start, seconds)
-        pct = (elapsed / seconds) * 100
-        sys.stdout.write(f"\r{label}{elapsed:5.2f}s / {seconds:5.2f}s ({pct:5.1f}%)")
+        sys.stdout.write("\r" + render(elapsed))
         sys.stdout.flush()
         if now >= end:
             break
         time.sleep(min(0.02, end - now))
-
     sys.stdout.write("\n")
     sys.stdout.flush()
 
 
-def click(pos: str, sleep: str):
+def _live_wait(seconds: float, label: str) -> None:
+    """Sleeps for `seconds`, printing a live-updating single line showing
+    "elapsed/total (pct%)" that overwrites itself in place instead of a
+    silent, untracked sleep. Used for waits outside the sequence loop."""
+    seconds = max(0.0, seconds)
+
+    def render(elapsed: float) -> str:
+        pct = 100.0 if seconds == 0 else (elapsed / seconds) * 100
+        return f"[{label}] {elapsed:.2f}/{seconds:.2f}s ({pct:3.0f}%)"
+
+    _run_with_ticks(seconds, render)
+
+
+def _log_action(i: int, action: str, wait: str, comment: str) -> None:
+    """Static fallback: logs 'Action NNN: action - wait comment' once, same as
+    before, for actions where `wait` isn't actually used as a sleep duration."""
+    logger.debug("Action %3d: %4s - %5s %s", i, action, wait, comment)
+
+
+def _log_action_and_wait(i: int, action: str, wait: str, comment: str) -> None:
+    """Logs 'Action NNN: action - wait comment' and sleeps for `wait` seconds,
+    but instead of a static wait value followed by a separate progress line,
+    the wait field itself live-updates in place as "elapsed/total (pct%)",
+    overwriting the same terminal line on each tick."""
+    seconds = max(0.0, float(wait))
+
+    def render(elapsed: float) -> str:
+        pct = 100.0 if seconds == 0 else (elapsed / seconds) * 100
+        progress = f"{elapsed:.2f}/{seconds:.2f}s ({pct:3.0f}%)"
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        return f"{ts} - DEBUG - Action {i:3d}: {action:>4} - {progress:<17} {comment}"
+
+    _run_with_ticks(seconds, render)
+
+    if DEBUG:
+        file_handler.emit(
+            logger.makeRecord(
+                logger.name,
+                logging.DEBUG,
+                __file__,
+                0,
+                "Action %3d: %4s - %5s %s",
+                (i, action, wait, comment),
+                None,
+            )
+        )
+
+
+def click(pos: str, sleep: str, action_ctx: tuple[int, str, str] | None = None):
     global STEP_IDX
     if len(click_boxes[pos]) == 4:
         x = (click_boxes[pos][0] + click_boxes[pos][2]) / 2
@@ -231,7 +270,11 @@ def click(pos: str, sleep: str):
         os.makedirs(f"debug/steps/{TARGET_RUN}/", exist_ok=True)
         img.save(f"debug/steps/{TARGET_RUN}/{STEP_IDX:03}_{pos}.png")
 
-    sleep_with_progress(float(sleep), label=f"[{pos}] ")
+    if action_ctx is not None:
+        i, action_name, comment = action_ctx
+        _log_action_and_wait(i, action_name, sleep, comment)
+    else:
+        _live_wait(float(sleep), pos)
     curr = pyautogui.position()
     pydirectinput.click(int(x), int(y))
     pyautogui.moveTo(curr)
@@ -318,6 +361,12 @@ The OCR has to 'see' the content of the game to determine what to do.""",
             int(client_bottom - 0.105 * client_height),
             int(client_left + (0.105 + 0.113 * i) * client_width),
             int(client_bottom - 0.095 * client_height),
+        )
+        click_boxes[f"u{i}hptext"] = (
+            int(client_left + (0.13 + 0.113 * i) * client_width),
+            int(client_bottom - 0.11 * client_height),
+            int(client_left + (0.18 + 0.113 * i) * client_width),
+            int(client_bottom - 0.08 * client_height),
         )
     click_boxes["bs"] = (
         client_left + 0.89 * client_width,
@@ -534,7 +583,7 @@ def execute_seq(seq: list[str]) -> tuple[bool, bool]:
     os.makedirs(f"{TARGET_RUN}_scores", exist_ok=True)
     with open(f"{TARGET_RUN}_scores/run.txt", "w", encoding="utf-8") as f:
         f.writelines(seq)
-    pyautogui.sleep(1)
+    _live_wait(1, "seq-start")
 
     for i, line in enumerate(seq):
         l = line.split("#", 1)
@@ -552,12 +601,13 @@ def execute_seq(seq: list[str]) -> tuple[bool, bool]:
         else:
             action, wait, other = line, "5", []
         action = action.lower()
-        logger.debug("Action %3d: %4s - %5s %s", i + 1, action, wait, comment)
         match action:
             case "stop":
+                _log_action(i + 1, action, wait, comment)
                 logger.info("Found stop, stopping")
                 return True, False
             case "sc":
+                _log_action(i + 1, action, wait, comment)
                 img = grab_region(click_boxes["screen"])
                 os.makedirs(f"{TARGET_RUN}_scores/{other[0]}", exist_ok=True)
                 i = 0
@@ -568,24 +618,25 @@ def execute_seq(seq: list[str]) -> tuple[bool, bool]:
                 img.save(f"{TARGET_RUN}_scores/{other[0]}/{i:03}.png")
                 logger.info("Took screenshot in %s, nr %d", other[0], i)
             case "pause":
+                _log_action(i + 1, action, wait, comment)
                 input("Sequence paused. Press Enter to continue...")
                 logger.info("Continuing after pause")
             case "bss":
                 # Shorthand for bs bs if done manually
-                click("bs", wait)
+                click("bs", wait, action_ctx=(i + 1, action, comment))
                 click("bs", "0.3")
             case "u0s" | "u1s" | "u2s" | "u3s" | "u4s" | "ba" | "bs" | "esc":
                 # Select action (uX is ult use)
-                click(action, wait)
+                click(action, wait, action_ctx=(i + 1, action, comment))
             case "u0" | "u1" | "u2" | "u3" | "u4":
                 # Shorthand for uXs ba if done manually
-                click(f"{action}s", wait)
+                click(f"{action}s", wait, action_ctx=(i + 1, action, comment))
                 click("ba", "3")
             case "e" | "q":
-                sleep_with_progress(float(wait), label=f"[{action}] ")
+                _log_action_and_wait(i + 1, action, wait, comment)
                 pydirectinput.press(action)
             case "cond" | "condinv":
-                sleep_with_progress(float(wait), label=f"[{action}] ")
+                _log_action_and_wait(i + 1, action, wait, comment)
                 has_false = any(not is_cond_true(cond) for cond in other)
                 if action == "cond":
                     if has_false:
@@ -594,7 +645,7 @@ def execute_seq(seq: list[str]) -> tuple[bool, bool]:
                     return False, False
             case _:
                 logger.error("unknown action [%s]", action)
-    pyautogui.sleep(1.1)
+    _live_wait(1.1, "post-run settle")
     img = grab_region(click_boxes["screen"])
     os.makedirs(f"{TARGET_RUN}_scores", exist_ok=True)
     i = 0
@@ -603,7 +654,7 @@ def execute_seq(seq: list[str]) -> tuple[bool, bool]:
             i = j
             break
     img.save(f"{TARGET_RUN}_scores/{i:03}_d.png")
-    pyautogui.sleep(14)
+    _live_wait(14, "death cooldown")
     return False, True
 
 
@@ -624,7 +675,7 @@ def reset_after_score_attack_run(take_pic: bool):
     click("retry_in_pause", "1")
     click("retry_in_pause_ok", "1")
     click("retry_in_pause_ok", "10")
-    pyautogui.sleep(10)
+    _live_wait(10, "reset cooldown")
 
 
 def reset_bad_crisis_run():
@@ -633,7 +684,7 @@ def reset_bad_crisis_run():
     click("retry_in_pause", "1")
     click("retry_in_pause_ok", "1")
     click("retry_in_pause_ok", "2")
-    pyautogui.sleep(10)
+    _live_wait(10, "reset cooldown")
 
 
 def get_state() -> str:
@@ -745,8 +796,14 @@ def main():
             LAST_CLICK_TIME = time.monotonic()
             RECORD_FILE = open(file_name, "w", encoding="utf-8")
 
+            record_start = time.monotonic()
             while True:
-                pyautogui.sleep(1)
+                elapsed = time.monotonic() - record_start
+                sys.stdout.write(
+                    f"\r[recording] {elapsed:6.1f}s elapsed - press hotkeys to record actions"
+                )
+                sys.stdout.flush()
+                time.sleep(1)
         state = get_state()
 
 
