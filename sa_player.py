@@ -1,7 +1,6 @@
 import argparse
 import colorsys
 import logging
-import operator
 import os
 import re
 import sys
@@ -9,7 +8,6 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-import cv2
 import keyboard
 import mouse
 import mss
@@ -21,15 +19,8 @@ import win32gui
 from PIL import Image, ImageDraw
 from requests import get
 
-MAKE_CANDIDATES = False
 pyautogui.FAILSAFE = False
 __version__ = "vDEV"
-
-
-def resource_path(relative_path: str) -> str:
-    """Resolve a bundled data file/folder, while keeping source runs editable."""
-    base_path = getattr(sys, "_MEIPASS", os.path.abspath("."))
-    return os.path.join(base_path, relative_path)
 
 
 def check_git_version_match():
@@ -70,13 +61,6 @@ def parse_args():
         action="store_true",
         default=False,
         help="Run in Crisis mode (Same as crisis in sequence name)",
-    )
-    parser.add_argument(
-        "-x",
-        "--capture",
-        action="store_true",
-        default=False,
-        help="Capture candidate numbers",
     )
     return parser.parse_args()
 
@@ -257,7 +241,12 @@ def _log_action_and_wait(i: int, action: str, wait: str, comment: str) -> None:
         )
 
 
-def click(pos: str, sleep: str, action_ctx: tuple[int, str, str] | None = None):
+def click(
+    pos: str,
+    sleep: str,
+    action_ctx: tuple[int, str, str] | None = None,
+    log=True,
+) -> None:
     global STEP_IDX
     if len(click_boxes[pos]) == 4:
         x = (click_boxes[pos][0] + click_boxes[pos][2]) / 2
@@ -289,7 +278,7 @@ def click(pos: str, sleep: str, action_ctx: tuple[int, str, str] | None = None):
     if action_ctx is not None:
         i, action_name, comment = action_ctx
         _log_action_and_wait(i, action_name, sleep, comment)
-    else:
+    elif log:
         _live_wait(float(sleep), pos)
     curr = pyautogui.position()
     pydirectinput.click(int(x), int(y))
@@ -453,246 +442,6 @@ def is_curr_hp_colour(user_idx: str, colour: str) -> bool:
     return colour == detected_colour
 
 
-TEMPLATE_SIZE = (40, 64)  # (width, height)
-
-
-def normalize_glyph(glyph_fg255, size=TEMPLATE_SIZE):
-    """Tight-crop a digit, resize it to a fixed-height canvas and center it.
-
-    This is the same normalization used by link_raid_automation.py, so the
-    templates can be shared between the two programs.
-    """
-    ys, xs = np.where(glyph_fg255 > 0)
-    if len(ys) == 0:
-        return np.zeros((size[1], size[0]), dtype=np.uint8)
-
-    y0, y1 = ys.min(), ys.max() + 1
-    x0, x1 = xs.min(), xs.max() + 1
-    tight = glyph_fg255[y0:y1, x0:x1]
-
-    W, H = size
-    h, w = tight.shape
-    scale = H / h
-    new_w = max(1, min(W, int(round(w * scale))))
-    resized = cv2.resize(tight, (new_w, H), interpolation=cv2.INTER_AREA)
-
-    canvas = np.zeros((H, W), dtype=np.uint8)
-    x_off = (W - new_w) // 2
-    canvas[:, x_off : x_off + new_w] = resized
-    return canvas
-
-
-_DIGIT_TEMPLATES = None
-
-
-def _load_digit_templates(path=None):
-    """Load the shared digit_templates/ directory used by Link Raid."""
-    global _DIGIT_TEMPLATES
-    if _DIGIT_TEMPLATES is not None:
-        return _DIGIT_TEMPLATES
-
-    if path is None:
-        path = resource_path("digit_templates")
-
-    templates = {}
-    if os.path.isdir(path):
-        for digit in os.listdir(path):
-            if not digit.isdigit():
-                continue
-
-            digit_dir = os.path.join(path, digit)
-            if not os.path.isdir(digit_dir):
-                continue
-
-            samples = []
-            for fname in os.listdir(digit_dir):
-                img = cv2.imread(
-                    os.path.join(digit_dir, fname),
-                    cv2.IMREAD_GRAYSCALE,
-                )
-                if img is not None:
-                    # Link Raid expects the template images themselves to
-                    # already be in TEMPLATE_SIZE, so normalize them here too
-                    # to make SA tolerant of differently sized template files.
-                    samples.append(normalize_glyph(img))
-
-            if samples:
-                templates[digit] = samples
-
-    if not templates:
-        logger.warning(
-            "No digit templates found at %s. "
-            "SA HP OCR will return 0 until digit_templates/ is available.",
-            path,
-        )
-
-    _DIGIT_TEMPLATES = templates
-    return templates
-
-
-def _classify_glyph(glyph_norm, templates, min_score=0.5):
-    best_digit, best_score = "?", -1.0
-
-    for digit, samples in templates.items():
-        for tmpl in samples:
-            # Both images are normalized to TEMPLATE_SIZE, so this is a
-            # one-to-one glyph comparison rather than whole-number OCR.
-            score = cv2.matchTemplate(
-                glyph_norm.astype(np.float32),
-                tmpl.astype(np.float32),
-                cv2.TM_CCOEFF_NORMED,
-            )[0][0]
-
-            if score > best_score:
-                best_score, best_digit = score, digit
-
-    if best_score < min_score:
-        return "?", best_score
-
-    return best_digit, best_score
-
-
-def _segment_glyphs(bw_upscaled):
-    """Split a binarized number into individual digit glyphs."""
-    n, _, stats, _ = cv2.connectedComponentsWithStats(
-        bw_upscaled,
-        connectivity=8,
-    )
-
-    max_h = max((stats[i][3] for i in range(1, n)), default=0)
-
-    comps = sorted(
-        (tuple(stats[i][:4]) for i in range(1, n) if stats[i][3] >= max_h * 0.3),
-        key=lambda c: c[0],
-    )
-
-    Hh, Ww = bw_upscaled.shape
-    glyphs = []
-
-    for idx, (x, y, cw, ch) in enumerate(comps):
-        left = 0 if idx == 0 else (comps[idx - 1][0] + comps[idx - 1][2] + x) // 2
-        right = Ww if idx == len(comps) - 1 else (x + cw + comps[idx + 1][0]) // 2
-
-        pad = 15
-        x0, x1 = max(left, x - pad), min(Ww, x + cw + pad)
-        y0, y1 = max(0, y - pad), min(Hh, y + ch + pad)
-        glyphs.append(bw_upscaled[y0:y1, x0:x1])
-
-    return glyphs
-
-
-def _binarize_bright_text(gray: np.ndarray) -> np.ndarray:
-    """Same adaptive/Otsu preprocessing as Link Raid."""
-    _, bw = cv2.threshold(
-        gray,
-        0,
-        255,
-        cv2.THRESH_BINARY + cv2.THRESH_OTSU,
-    )
-
-    white_ratio = np.count_nonzero(bw == 255) / bw.size
-
-    if white_ratio > 0.95 or white_ratio < 0.05:
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-        enhanced = clahe.apply(gray)
-        _, bw = cv2.threshold(
-            enhanced,
-            0,
-            255,
-            cv2.THRESH_BINARY + cv2.THRESH_OTSU,
-        )
-
-    if np.count_nonzero(bw == 255) > np.count_nonzero(bw == 0):
-        bw = 255 - bw
-
-    return bw
-
-
-def get_curr_hp_value(user_idx: str, upscale: int = 8) -> int:
-    """Read the HP number using the shared Link Raid digit templates.
-
-    Unlike Tesseract, this recognizes each digit glyph individually.
-    This is intended to correctly handle values such as 5474.
-    """
-    img = grab_region(click_boxes[f"u{user_idx}hptext"])
-
-    if DEBUG:
-        os.makedirs("debug/hp_value", exist_ok=True)
-        img.save(f"debug/hp_value/{user_idx}_raw.png")
-
-    gray = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
-    h, w = gray.shape
-    up = cv2.resize(
-        gray,
-        (w * upscale, h * upscale),
-        interpolation=cv2.INTER_CUBIC,
-    )
-
-    bw = _binarize_bright_text(up)
-    templates = _load_digit_templates()
-    glyphs = _segment_glyphs(bw)
-
-    result = ""
-
-    if MAKE_CANDIDATES and not glyphs:
-        os.makedirs("debug/candidates", exist_ok=True)
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-        img.save(f"debug/candidates/hp{user_idx}_{stamp}_rawcrop_empty.png")
-
-    for idx, glyph in enumerate(glyphs):
-        fg_ratio = np.count_nonzero(glyph) / glyph.size
-
-        if fg_ratio > 0.97:
-            if MAKE_CANDIDATES:
-                os.makedirs("debug/candidates", exist_ok=True)
-                stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-                img.save(
-                    f"debug/candidates/hp{user_idx}_{stamp}_rawcrop_degenerate.png"
-                )
-            continue
-
-        norm = normalize_glyph(glyph)
-        digit, score = _classify_glyph(norm, templates)
-
-        if digit == "?" and MAKE_CANDIDATES:
-            os.makedirs("debug/candidates", exist_ok=True)
-            stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-            cv2.imwrite(
-                f"debug/candidates/hp{user_idx}_{stamp}.png",
-                norm,
-            )
-            img.save(f"debug/candidates/hp{user_idx}_{stamp}_rawcrop.png")
-
-        if DEBUG:
-            os.makedirs("debug/hp_value", exist_ok=True)
-            cv2.imwrite(
-                f"debug/hp_value/{user_idx}_{idx}_{digit}_{score:.2f}.png",
-                norm,
-            )
-            logger.debug(
-                "HP %s glyph %d -> %s (score %.2f)",
-                user_idx,
-                idx,
-                digit,
-                score,
-            )
-
-        if digit != "?":
-            result += digit
-
-    clean = re.sub(r"[^0-9]", "", result)
-    value = int(clean) if clean else 0
-
-    logger.debug(
-        "HP value for user %s: template OCR -> %r -> %d",
-        user_idx,
-        result,
-        value,
-    )
-
-    return value
-
-
 def is_ailment(user_idx: str, stat_idx: int, ailment: str) -> bool:
     colour_img = grab_region(click_boxes[f"u{user_idx}a{stat_idx}"])
     arr = np.array(colour_img).astype(float) / 255.0
@@ -766,14 +515,6 @@ _AILMENT_RE = re.compile(r"^(curse|poison)(\d+)(<)(\d+)$")
 _ULT_RE = re.compile(r"^ult(\d+)$")
 _ALIVE_RE = re.compile(r"^alive(\d+)$")
 _HP_RE = re.compile(r"^hp(\d+)(red|yellow|green)$")
-_HP_VAL_RE = re.compile(r"^hpval(\d+)(<=|>=|==|<|>)(\d+)$")
-_HP_VAL_OPS = {
-    "<": operator.lt,
-    ">": operator.gt,
-    "<=": operator.le,
-    ">=": operator.ge,
-    "==": operator.eq,
-}
 
 
 def is_cond_true(cond: str) -> bool:
@@ -819,14 +560,6 @@ def is_cond_true(cond: str) -> bool:
         char_idx, colour = m.group(1), m.group(2)
         if not is_curr_hp_colour(char_idx, colour):
             logger.info("Cond is false (hp): %s", cond)
-            return False
-        return True
-
-    if m := _HP_VAL_RE.match(cond):
-        char_idx, comparator, amount = m.group(1), m.group(2), int(m.group(3))
-        value = get_curr_hp_value(char_idx)
-        if not _HP_VAL_OPS[comparator](value, amount):
-            logger.info("Cond is false (hp value): %s — current=%d", cond, value)
             return False
         return True
 
@@ -896,7 +629,11 @@ def execute_seq(seq: list[str]) -> tuple[bool, bool]:
             case "bss":
                 # Shorthand for bs bs if done manually
                 click("bs", wait, action_ctx=(i + 1, action, comment))
-                click("bs", "0.3")
+                for target in other:
+                    click(
+                        target, "0.02", action_ctx=(i + 1, target, f"BS onto {target}")
+                    )
+                click("bs", "0.02", log=False)
             case "u0s" | "u1s" | "u2s" | "u3s" | "u4s" | "ba" | "bs" | "esc":
                 # Select action (uX is ult use)
                 click(action, wait, action_ctx=(i + 1, action, comment))
@@ -1009,7 +746,7 @@ def fetch_target_run() -> str:
 
 
 def main():
-    global LAST_CLICK_TIME, RECORD_FILE, STEP_IDX, TARGET_RUN, MAKE_CANDIDATES
+    global LAST_CLICK_TIME, RECORD_FILE, STEP_IDX, TARGET_RUN
     sequences_dir = Path("recorded_sequences")
     sequences_dir.mkdir(exist_ok=True)
 
@@ -1026,8 +763,6 @@ def main():
 
     if DEBUG:
         take_debug_screenshot()
-
-    MAKE_CANDIDATES = args.capture
 
     logger.info(
         "Setup complete, ready to execute or record sequences. At any moment press ctrl+shift+q to quit"
@@ -1069,7 +804,6 @@ def main():
 
             LAST_CLICK_TIME = time.monotonic()
             RECORD_FILE = open(file_name, "w", encoding="utf-8")
-
         state = get_state()
 
 
