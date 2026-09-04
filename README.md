@@ -29,18 +29,18 @@ action, wait, param1, param2, ...
 
 ## Crisis
 
-To make the program run in crisis mode, use the ``--crisis`` flag, or simply name the sequence file something with crisis in the name. In this mode the execution will automatically stop once the file has been read through without any cond resetting it
+To make the program run in crisis mode, use the `--crisis` flag, or simply name the sequence file something with crisis in the name. In this mode the execution will automatically stop once the file has been read through without any cond resetting it.
 
 ---
 
 ## Actions
 
-The leftmost unit is 0, rightmost is 4
+The leftmost unit is 0, rightmost is 4.
 
 ### Click Actions
 
 | Action | Description |
-| -------- | ------------- |
+| --- | --- |
 | `u0s` – `u4s` | Click on the portrait of unit X |
 | `ba` | Basic Attack button & use ultimate button |
 | `u0` – `u4` | Use ultimate for X. Shorthand for `uXs, wait` then `ba, 3` |
@@ -49,21 +49,89 @@ The leftmost unit is 0, rightmost is 4
 
 ### Key Press Actions
 
-Enemies focused are changed with q and e keyboard. This does not support clicking enemies in game, it's too unreliable
+Enemies focused are changed with q and e keyboard. This does not support clicking enemies in game, it's too unreliable.
 
 | Action | Description |
-| -------- | ------------- |
+| --- | --- |
 | `e` | Press the `E` key, moving focused enemy one to the left |
 | `q` | Press the `Q` key, moving focused enemy one to the right |
 
 ### Control Actions
 
 | Action | Description |
-| -------- | ------------- |
+| --- | --- |
 | `stop` | End the sequence. Enters menu mode, allowing you to record from this point, or execute another sequence. Combine it with good cond statements to make the program run until you have achieved correct ST hits etc. |
-| `pause` | Pause execution, waiting you to press enter in the terminal before continuing |
-| `sc` | screenshot the screen. takes param1 as the name of the folder the image will be saved to, e.g. `sc, 4, examples` |
-| `cond` | Check one or more conditions — if any fail restart the run |
+| `pause` | Pause execution, waiting for you to press enter in the terminal before continuing |
+| `sc` | Screenshot the screen. Takes param1 as the folder name, e.g. `sc, 4, examples` |
+| `cond` | Check one or more conditions — if any fail, reset the run |
+| `condinv` | Check the inverse of one or more conditions — if all pass, reset the run |
+| `set` | Assign or adjust a variable value |
+| `label` | Define a target location for jumps |
+| `goto` | Jump directly to a named label |
+| `ifeq` | Compare a variable to a value and jump to a label if equal |
+| `restart` | Reset sequence execution back to line 0 (the start of the file) |
+
+---
+
+## Variables & Control Flow
+
+You can store dynamic values and build non-linear loops or conditionally branching routines.
+
+### `set` — Set or Modify Variables
+
+Assigns a text or numeric value to a named variable. Supports absolute assignment as well as relative increment (`+N`) or decrement (`-N`).
+
+```txt
+set, counter, 0   # Sets variable 'counter' to "0"
+set, counter, +1  # Increments 'counter' by 1
+set, counter, -1  # Decrements 'counter' by 1
+set, phase, burst # Sets variable 'phase' to "burst"
+```
+
+---
+
+### `label` & `goto` — Navigation Marks & Jumps
+
+Mark locations in your script with `label` and jump unconditionally using `goto`.
+
+```txt
+label, loop_start
+ba, 1.5
+goto, loop_start  # Jumps back to 'loop_start'
+```
+
+---
+
+### `ifeq` — Conditional Jumps
+
+Compares the current value of a variable against a target value. If equal, execution jumps directly to the specified `label`.
+
+```txt
+
+# Format: ifeq, <var_name>, <target_value>, <label_name>
+
+set, loop_count, 0
+
+label, check_counter
+ifeq, loop_count, 3, finish_phase  # If loop_count == 3, jump to finish_phase
+
+ba, 1.0
+set, loop_count, +1
+goto, check_counter
+
+label, finish_phase
+u0, 3.0
+```
+
+---
+
+### `restart` — Reset Execution Pointer
+
+Immediately returns execution to the very first line (index 0) of the sequence.
+
+```txt
+restart # Restarts execution from line 0
+```
 
 ---
 
@@ -79,7 +147,7 @@ cond, <wait>, <condition1>, <condition2>, ...
 
 #### `ult<X>` — Unit has ultimate ready
 
-Passes if unit X has ultimate ready
+Passes if unit X has ultimate ready.
 
 ```txt
 cond, 1, ult2 # Wait one second, then check that unit 2 has ultimate ready
@@ -89,10 +157,10 @@ cond, 1, ult2 # Wait one second, then check that unit 2 has ultimate ready
 
 #### `hp<X><colour>` — Unit HP bar colour
 
-Passes if unit X HP bar matches the specified colour. Colours may be one of `red`, `yellow`, or `green`. Do note even "black" hp (down to 1 hp) is red. If you want to check if a character is alive or not use the alive cond.
+Passes if unit X HP bar matches the specified colour. Colours may be `red`, `yellow`, or `green`. Note even "black" HP (down to 1 HP) is red. Use `alive` to check strictly if a unit is alive.
 
 ```txt
-cond, 0.5, hp0red, hp4yellow # Unit 0 has red hp, unit 4 has yellow hp
+cond, 0.5, hp0red, hp4yellow # Unit 0 has red HP, unit 4 has yellow HP
 ```
 
 ---
@@ -102,7 +170,7 @@ cond, 0.5, hp0red, hp4yellow # Unit 0 has red hp, unit 4 has yellow hp
 Passes if unit N has **fewer than** M ailments applied to it. Note it only checks the 4 ailments/debugs visible below the character portraits. Available ailments are `curse` and `poison`.
 
 ```txt
-cond, 1, curse0<2 # Wait 1 sec, then check that unit 0 has less than 2 curses applied
+cond, 1, curse0<2 # Wait 1 sec, then check that unit 0 has fewer than 2 curses applied
 ```
 
 ### Multiple Conditions
@@ -113,10 +181,10 @@ You can chain multiple conditions on one `cond` line — all must be true to pro
 cond, 1, ult0, ult2, hp1red, alive4 # Wait 1 sec then check that units 0 and 2 has ultimate, unit 1 has red hp, and unit4 is alive
 ```
 
-### Inverse condition
+### Inverse condition (`condinv`)
 
 ``condinv`` works identically to ``cond``, but is used to check the inverse.
 
 ```txt
-condinv, 1, ult0 # Wait 1 sec then check that units 0 does not have ultimate
+condinv, 1, ult0 # Wait 1 sec, then check that unit 0 does NOT have ultimate
 ```

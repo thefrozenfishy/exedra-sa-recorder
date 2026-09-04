@@ -391,6 +391,13 @@ The OCR has to 'see' the content of the game to determine what to do.""",
         client_left + 0.975 * client_width,
         client_top + 0.91 * client_height,
     )
+    for i in range(4):
+        click_boxes[f"enemy{i}buff"] = (
+            int(client_left + (0.705 + 0.0185 * i) * client_width),
+            int(client_top + 0.105 * client_height),
+            int(client_left + (0.715 + 0.0185 * i) * client_width),
+            int(client_top + 0.135 * client_height),
+        )
 
     click_boxes["retry_after_win"] = (
         client_left + 0.9 * client_width,
@@ -512,6 +519,9 @@ def is_alive(user_idx):
 
 
 _AILMENT_RE = re.compile(r"^(curse|poison)(\d+)(<)(\d+)$")
+_ENEMY_AILMENT_RE = re.compile(r"^enemy(curse|poison)(<)(\d+)$")
+_BUFF_RE = re.compile(r"^(debuff|buff)(\d+)(<)(\d+)$")
+_ENEMY_BUFF_RE = re.compile(r"^enemy(debuff|buff)(<)(\d+)$")
 _ULT_RE = re.compile(r"^ult(\d+)$")
 _ALIVE_RE = re.compile(r"^alive(\d+)$")
 _HP_RE = re.compile(r"^hp(\d+)(red|yellow|green)$")
@@ -590,7 +600,24 @@ def execute_seq(seq: list[str]) -> tuple[bool, bool]:
         f.writelines(seq)
     _live_wait(1, "seq-start")
 
-    for i, line in enumerate(seq):
+    # Pre-pass to scan for labels
+    labels = {}
+    for idx, raw_line in enumerate(seq):
+        clean_line = raw_line.split("#", 1)[0].strip()
+        if not clean_line:
+            continue
+        parts = [p.strip() for p in clean_line.split(",")]
+        if parts[0].lower() == "label" and len(parts) > 1:
+            labels[parts[1]] = idx
+
+    variables = {}
+    pc = 0
+
+    while pc < len(seq):
+        i = pc
+        line = seq[pc]
+        pc += 1  # Advance instruction pointer by default
+
         l = line.split("#", 1)
         if len(l) == 2:
             line, comment = [s.strip() for s in line.split("#", 1)]
@@ -599,33 +626,109 @@ def execute_seq(seq: list[str]) -> tuple[bool, bool]:
             comment = ""
         if not line:
             logger.debug("Comment%3d: %s", i + 1, comment)
-            # Use # for comments
             continue
-        if "," in line:
-            action, wait, *other = [a.strip() for a in line.split(",")]
-        else:
-            action, wait, other = line, "5", []
-        action = action.lower()
+
+        parts = [a.strip() for a in line.split(",")]
+        action = parts[0].lower()
+        wait = parts[1] if len(parts) > 1 else "5"
+        other = parts[2:] if len(parts) > 2 else []
+
         match action:
+            case "set":
+                _log_action(i + 1, action, wait, comment)
+                if len(parts) >= 3:
+                    var_name = parts[1]
+                    val = parts[2]
+                    curr_val = variables.get(var_name, "0")
+                    if val.startswith("+") and val[1:].isdigit():
+                        try:
+                            variables[var_name] = str(int(curr_val) + int(val[1:]))
+                        except ValueError:
+                            variables[var_name] = val
+                    elif val.startswith("-") and val[1:].isdigit():
+                        try:
+                            variables[var_name] = str(int(curr_val) - int(val[1:]))
+                        except ValueError:
+                            variables[var_name] = val
+                    else:
+                        variables[var_name] = val
+                    logger.info(
+                        "Set variable '%s' = '%s'", var_name, variables[var_name]
+                    )
+                else:
+                    logger.error("Invalid set syntax. Expected: set, var_name, value")
+
+            case "label":
+                _log_action(i + 1, action, wait, comment)
+                # Defined during pre-pass; no runtime operation required
+
+            case "goto":
+                _log_action(i + 1, action, wait, comment)
+                target_label = parts[1] if len(parts) > 1 else ""
+                if target_label in labels:
+                    logger.info("Goto jumping to label '%s'", target_label)
+                    pc = labels[target_label]
+                else:
+                    logger.error("Label '%s' not found for goto", target_label)
+
+            case "ifeq":
+                _log_action(i + 1, action, wait, comment)
+                if len(parts) >= 4:
+                    var_name = parts[1]
+                    cmp_val = parts[2]
+                    target_label = parts[3]
+                    actual_val = str(variables.get(var_name, ""))
+                    logger.debug(
+                        "ifeq check: var '%s' (actual: '%s') == expected '%s'",
+                        var_name,
+                        actual_val,
+                        cmp_val,
+                    )
+                    if actual_val == cmp_val:
+                        if target_label in labels:
+                            logger.info(
+                                "ifeq condition met (%s == %s), jumping to label '%s'",
+                                actual_val,
+                                cmp_val,
+                                target_label,
+                            )
+                            pc = labels[target_label]
+                        else:
+                            logger.error(
+                                "Label '%s' not found for ifeq jump", target_label
+                            )
+                else:
+                    logger.error(
+                        "Invalid ifeq syntax. Expected: ifeq, var_name, cmp_val, target_label"
+                    )
+
+            case "restart":
+                _log_action(i + 1, action, wait, comment)
+                logger.info("Restarting sequence execution")
+                return False, False
+
             case "stop":
                 _log_action(i + 1, action, wait, comment)
                 logger.info("Found stop, stopping")
                 return True, False
+
             case "sc":
                 _log_action(i + 1, action, wait, comment)
                 img = grab_region(click_boxes["screen"])
                 os.makedirs(f"{TARGET_RUN}_scores/{other[0]}", exist_ok=True)
-                i = 0
+                img_idx = 0
                 for j in range(1000):
                     if not Path(f"{TARGET_RUN}_scores/{other[0]}/{j:03}.png").is_file():
-                        i = j
+                        img_idx = j
                         break
-                img.save(f"{TARGET_RUN}_scores/{other[0]}/{i:03}.png")
-                logger.info("Took screenshot in %s, nr %d", other[0], i)
+                img.save(f"{TARGET_RUN}_scores/{other[0]}/{img_idx:03}.png")
+                logger.info("Took screenshot in %s, nr %d", other[0], img_idx)
+
             case "pause":
                 _log_action(i + 1, action, wait, comment)
                 input("Sequence paused. Press Enter to continue...")
                 logger.info("Continuing after pause")
+
             case "bss":
                 # Shorthand for bs bs if done manually
                 click("bs", wait, action_ctx=(i + 1, action, comment))
@@ -634,16 +737,20 @@ def execute_seq(seq: list[str]) -> tuple[bool, bool]:
                         target, "0.02", action_ctx=(i + 1, target, f"BS onto {target}")
                     )
                 click("bs", "0.02", log=False)
+
             case "u0s" | "u1s" | "u2s" | "u3s" | "u4s" | "ba" | "bs" | "esc":
                 # Select action (uX is ult use)
                 click(action, wait, action_ctx=(i + 1, action, comment))
+
             case "u0" | "u1" | "u2" | "u3" | "u4":
                 # Shorthand for uXs ba if done manually
                 click(f"{action}s", wait, action_ctx=(i + 1, action, comment))
                 click("ba", "3")
+
             case "e" | "q":
                 _log_action_and_wait(i + 1, action, wait, comment)
                 pydirectinput.press(action)
+
             case "cond" | "condinv":
                 _log_action_and_wait(i + 1, action, wait, comment)
                 has_false = any(not is_cond_true(cond) for cond in other)
@@ -652,17 +759,20 @@ def execute_seq(seq: list[str]) -> tuple[bool, bool]:
                         return False, False
                 elif not has_false:  # Inverse of cond
                     return False, False
+
             case _:
                 logger.error("unknown action [%s]", action)
+
     _live_wait(1.1, "post-run settle")
     img = grab_region(click_boxes["screen"])
     os.makedirs(f"{TARGET_RUN}_scores", exist_ok=True)
-    i = 0
+
+    out_idx = 0
     for j in range(1000):
         if not Path(f"{TARGET_RUN}_scores/{j:03}.png").is_file():
-            i = j
+            out_idx = j
             break
-    img.save(f"{TARGET_RUN}_scores/{i:03}_d.png")
+    img.save(f"{TARGET_RUN}_scores/{out_idx:03}_d.png")
     _live_wait(14, "death cooldown")
     return False, True
 
