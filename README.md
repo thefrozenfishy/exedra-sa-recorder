@@ -165,12 +165,14 @@ cond, 0.5, hp0red, hp4yellow # Unit 0 has red HP, unit 4 has yellow HP
 
 ---
 
-#### `<ailment><X><<N>` — Fewer than N curse stacks on unit X
+#### `<status><X><<N>` — Fewer than N curse stacks on unit X
 
-Passes if unit N has **fewer than** M ailments applied to it. Note it only checks the 4 ailments/debugs visible below the character portraits. Available ailments are `curse` and `poison`.
+Passes if unit X has **fewer than** N statuses applied to it. Checks the 4 ailments/debuffs visible below character portraits. Available status are `curse` and `poison`, `wound`, `buff`, and `debuff`.  
+X may also be `enemy`, in this case it will check the statuses applied to the currently targeted enemy.
 
 ```txt
 cond, 1, curse0<2 # Wait 1 sec, then check that unit 0 has fewer than 2 curses applied
+cond, 5.5, enemybuff<1 # Wait 5.5 sec, then check that the target enemy has fewer than 1 buff applied
 ```
 
 ### Multiple Conditions

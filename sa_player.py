@@ -449,26 +449,49 @@ def is_curr_hp_colour(user_idx: str, colour: str) -> bool:
     return colour == detected_colour
 
 
-def is_ailment(user_idx: str, stat_idx: int, ailment: str) -> bool:
-    colour_img = grab_region(click_boxes[f"u{user_idx}a{stat_idx}"])
+def check_status_effect(
+    target: str, char_idx: str, stat_idx: int, effect_type: str
+) -> bool:
+    # Resolve bounding box key based on target type
+    box_name = (
+        f"enemy{stat_idx}buff" if target == "enemy" else f"u{char_idx}a{stat_idx}"
+    )
+
+    colour_img = grab_region(click_boxes[box_name])
     arr = np.array(colour_img).astype(float) / 255.0
-    avg_rgb = arr.mean(axis=(0, 1))  # [R, G, B] normalized
-    r, g, b = avg_rgb
+    r, g, b = arr.mean(axis=(0, 1))
+
+    active_type = None
+    if 0.5 > r > 0.3 and 0.6 > g > 0.4 and b > 0.5:
+        active_type = "buff"
+    elif r > 0.5 and 0.3 < g < 0.5 and b < 0.6:
+        active_type = "debuff"
+    elif 0.45 < r < 0.55 and 0.40 < g < 0.55 and 0.45 < b < 0.60:
+        active_type = "curse"
+    elif r < 0.4 and g > 0.4 and b < 0.5:
+        active_type = "poison"
+    elif 0.3 < r < 0.5 and 0.3 < g < 0.5 and 0.3 < b < 0.5:
+        active_type = "wound"
+
     logger.debug(
-        "Ailment colour for user %s: R=%.2f, G=%.2f, B=%.2f",
-        user_idx,
+        "%s %s status colour for idx %s slot %d: R=%.2f, G=%.2f, B=%.2f, read as %s",
+        target,
+        effect_type,
+        char_idx,
+        stat_idx,
         r,
         g,
         b,
+        active_type,
     )
-    ailment_char = "_"
-    if ailment == "curse" and 0.45 < r < 0.55 and 0.40 < g < 0.55 and 0.45 < b < 0.60:
-        ailment_char = "c"
-    if DEBUG:
-        os.makedirs(f"debug/ailments/{ailment_char}", exist_ok=True)
-        colour_img.save(f"debug/ailments/{ailment_char}_{r:.2f}_{g:.2f}_{b:.2f}.png")
 
-    return ailment_char != "_"
+    if DEBUG:
+        os.makedirs(f"debug/status/{effect_type}", exist_ok=True)
+        colour_img.save(
+            f"debug/status/{effect_type}/{target}_{char_idx}_{stat_idx}_{r:.2f}_{g:.2f}_{b:.2f}_{active_type}.png"
+        )
+
+    return active_type == effect_type
 
 
 def has_ult(user_idx):
@@ -518,10 +541,7 @@ def is_alive(user_idx):
     return _is_alive
 
 
-_AILMENT_RE = re.compile(r"^(curse|poison)(\d+)(<)(\d+)$")
-_ENEMY_AILMENT_RE = re.compile(r"^enemy(curse|poison)(<)(\d+)$")
-_BUFF_RE = re.compile(r"^(debuff|buff)(\d+)(<)(\d+)$")
-_ENEMY_BUFF_RE = re.compile(r"^enemy(debuff|buff)(<)(\d+)$")
+_STATUS_RE = re.compile(r"^(enemy)?(curse|poison|buff|debuff)(\d+)?(<)(\d+)$")
 _ULT_RE = re.compile(r"^ult(\d+)$")
 _ALIVE_RE = re.compile(r"^alive(\d+)$")
 _HP_RE = re.compile(r"^hp(\d+)(red|yellow|green)$")
@@ -530,27 +550,38 @@ _HP_RE = re.compile(r"^hp(\d+)(red|yellow|green)$")
 def is_cond_true(cond: str) -> bool:
     cond = cond.strip()
 
-    if m := _AILMENT_RE.match(cond):
-        ailment, char_idx, comparator, amount = (
-            m.group(1),
-            m.group(2),
-            m.group(3),
-            int(m.group(4)),
-        )
+    if m := _STATUS_RE.match(cond):
+        is_enemy = bool(m.group(1))
+        effect_type = m.group(2)
+        char_idx = m.group(3) if not is_enemy else "0"
+        comparator = m.group(4)
+        amount = int(m.group(5))
+
+        if not is_enemy and m.group(3) is None:
+            logger.error("Ally status condition missing character index: %s", cond)
+            input("Pausing. Press Enter to continue...")
+            return False
+
+        target = "enemy" if is_enemy else "ally"
+
         if comparator == "<":
-            applied = sum(is_ailment(char_idx, i, ailment) for i in range(4))
+            applied = sum(
+                check_status_effect(target, char_idx, i, effect_type) for i in range(4)
+            )
             if applied >= amount:
                 logger.info(
-                    "Cond is false (ailment): %s — applied=%d, threshold=%d",
+                    "Cond is false (%s %s): %s — applied=%d, threshold=%d",
+                    target,
+                    effect_type,
                     cond,
                     applied,
                     amount,
                 )
                 return False
             return True
-        else:
-            logger.error("Unknown comparator '%s' in condition: %s", comparator, cond)
-            return False
+        logger.error("Unknown comparator '%s' in condition: %s", comparator, cond)
+        input("Pausing. Press Enter to continue...")
+        return False
 
     if m := _ULT_RE.match(cond):
         char_idx = m.group(1)
@@ -574,6 +605,7 @@ def is_cond_true(cond: str) -> bool:
         return True
 
     logger.error("Unknown condition format: '%s'", cond)
+    input("Pausing. Press Enter to continue...")
     return False
 
 
@@ -657,6 +689,7 @@ def execute_seq(seq: list[str]) -> tuple[bool, bool]:
                     )
                 else:
                     logger.error("Invalid set syntax. Expected: set, var_name, value")
+                    input("Pausing. Press Enter to continue...")
 
             case "label":
                 _log_action(i + 1, action, wait, comment)
@@ -670,6 +703,7 @@ def execute_seq(seq: list[str]) -> tuple[bool, bool]:
                     pc = labels[target_label]
                 else:
                     logger.error("Label '%s' not found for goto", target_label)
+                    input("Pausing. Press Enter to continue...")
 
             case "ifeq":
                 _log_action(i + 1, action, wait, comment)
@@ -697,10 +731,12 @@ def execute_seq(seq: list[str]) -> tuple[bool, bool]:
                             logger.error(
                                 "Label '%s' not found for ifeq jump", target_label
                             )
+                            input("Pausing. Press Enter to continue...")
                 else:
                     logger.error(
                         "Invalid ifeq syntax. Expected: ifeq, var_name, cmp_val, target_label"
                     )
+                    input("Pausing. Press Enter to continue...")
 
             case "restart":
                 _log_action(i + 1, action, wait, comment)
@@ -762,6 +798,7 @@ def execute_seq(seq: list[str]) -> tuple[bool, bool]:
 
             case _:
                 logger.error("unknown action [%s]", action)
+                input("Pausing. Press Enter to continue...")
 
     _live_wait(1.1, "post-run settle")
     img = grab_region(click_boxes["screen"])
@@ -843,7 +880,7 @@ def fetch_target_run() -> str:
                 selected = files[choice - 1].stem
                 logger.info("Selected sequence: %s", selected)
                 return selected
-            logger.error(f"Please enter a number between 1 and {len(files)}.")
+            logger.error("Please enter a number between 1 and %d.", len(files))
         elif raw:
             # Allow typing a name directly; warn if it doesn't exist
             candidate = sequences_dir / f"{raw}.txt"
