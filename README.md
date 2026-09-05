@@ -153,6 +153,12 @@ Passes if unit X has ultimate ready.
 cond, 1, ult2 # Wait one second, then check that unit 2 has ultimate ready
 ```
 
+To check the currently "active" character, also after having clicked the ult button (useful when activating ult between boss action STs etc) append an a to signify the character being active, this moves the check box slightly upwards and gives better detection.
+
+```txt
+cond, 1, ult2a # Wait one second, then check that unit 2 has ultimate ready or "loaded" while being the active character
+```
+
 ---
 
 #### `hp<X><colour>` — Unit HP bar colour

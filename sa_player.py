@@ -350,6 +350,12 @@ The OCR has to 'see' the content of the game to determine what to do.""",
             int(client_left + (1.7 + i) * client_width // 9),
             int(client_bottom - 0.17 * client_height),
         )
+        click_boxes[f"u{i}ua"] = (
+            int(client_left + (1.5 + i) * client_width // 9),
+            int(client_bottom - 0.23 * client_height),
+            int(client_left + (1.7 + i) * client_width // 9),
+            int(client_bottom - 0.185 * client_height),
+        )
 
     for i in range(5):
         for j in range(4):
@@ -494,8 +500,11 @@ def check_status_effect(
     return active_type == effect_type
 
 
-def has_ult(user_idx):
-    colour_img = grab_region(click_boxes[f"u{user_idx}u"])
+def has_ult(user_idx, is_active):
+    if is_active:
+        colour_img = grab_region(click_boxes[f"u{user_idx}ua"])
+    else:
+        colour_img = grab_region(click_boxes[f"u{user_idx}u"])
     arr = np.array(colour_img).astype(float) / 255.0
     avg_rgb = arr.mean(axis=(0, 1))  # [R, G, B] normalized
     r, g, b = avg_rgb
@@ -542,7 +551,7 @@ def is_alive(user_idx):
 
 
 _STATUS_RE = re.compile(r"^(enemy)?(curse|poison|buff|debuff)(\d+)?(<)(\d+)$")
-_ULT_RE = re.compile(r"^ult(\d+)$")
+_ULT_RE = re.compile(r"^ult(\d+)(a)?$")
 _ALIVE_RE = re.compile(r"^alive(\d+)$")
 _HP_RE = re.compile(r"^hp(\d+)(red|yellow|green)$")
 
@@ -585,7 +594,8 @@ def is_cond_true(cond: str) -> bool:
 
     if m := _ULT_RE.match(cond):
         char_idx = m.group(1)
-        if not has_ult(char_idx):
+        is_active = m.group(2)
+        if not has_ult(char_idx, is_active):
             logger.info("Cond is false (ult): %s", cond)
             return False
         return True
