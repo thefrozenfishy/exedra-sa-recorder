@@ -223,7 +223,7 @@ def _log_action_and_wait(i: int, action: str, wait: str, comment: str) -> None:
         pct = 100.0 if seconds == 0 else (elapsed / seconds) * 100
         progress = f"{elapsed:.2f}/{seconds:.2f}s ({pct:3.0f}%)"
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        return f"{ts} - DEBUG - Action {i:3d}: {action:>4} - {progress:<17} {comment}"
+        return f"{ts} - Action {i:3d}: {action:>4} - {progress:<17} {comment}"
 
     _run_with_ticks(seconds, render)
 
@@ -503,8 +503,12 @@ def check_status_effect(
 def has_ult(user_idx, is_active):
     if is_active:
         colour_img = grab_region(click_boxes[f"u{user_idx}ua"])
+        has_ult_cond = lambda h, s, v: v >= 0.67 and s < 0.25
+        folder = "has_ulta"
     else:
         colour_img = grab_region(click_boxes[f"u{user_idx}u"])
+        has_ult_cond = lambda h, s, v: v >= 0.70
+        folder = "has_ult"
     arr = np.array(colour_img).astype(float) / 255.0
     avg_rgb = arr.mean(axis=(0, 1))  # [R, G, B] normalized
     r, g, b = avg_rgb
@@ -519,10 +523,10 @@ def has_ult(user_idx, is_active):
         s,
         v,
     )
-    has_ultimate = v >= 0.70
+    has_ultimate = has_ult_cond(h, s, v)
     if DEBUG:
-        os.makedirs("debug/has_ult", exist_ok=True)
-        colour_img.save(f"debug/has_ult/{has_ultimate}_{h:.2f}_{s:.2f}_{v:.2f}.png")
+        os.makedirs(f"debug/{folder}", exist_ok=True)
+        colour_img.save(f"debug/{folder}/{has_ultimate}_{h:.2f}_{s:.2f}_{v:.2f}.png")
 
     return has_ultimate
 
@@ -850,7 +854,7 @@ def reset_bad_crisis_run():
     click("retry_in_pause", "1")
     click("retry_in_pause_ok", "1")
     click("retry_in_pause_ok", "2")
-    _live_wait(10, "reset cooldown")
+    _live_wait(20, "reset cooldown")
 
 
 def get_state() -> str:
