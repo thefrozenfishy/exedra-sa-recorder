@@ -752,6 +752,29 @@ def execute_seq(seq: list[str]) -> tuple[bool, bool]:
                     )
                     input("Pausing. Press Enter to continue...")
 
+            case "setcond" | "setcondinv":
+                _log_action(i + 1, action, wait, comment)
+                if len(parts) >= 3:
+                    var_name = parts[1]
+                    conds = parts[2:]
+                    has_false = any(not is_cond_true(c) for c in conds)
+                    result_true = (not has_false) if action == "setcond" else has_false
+                    variables[var_name] = "true" if result_true else "false"
+                    logger.info(
+                        "%s: set variable '%s' = '%s' (conditions: %s)",
+                        action,
+                        var_name,
+                        variables[var_name],
+                        ", ".join(conds),
+                    )
+                else:
+                    logger.error(
+                        "Invalid %s syntax. Expected: %s, var_name, cond1[, cond2, ...]",
+                        action,
+                        action,
+                    )
+                    input("Pausing. Press Enter to continue...")
+
             case "restart":
                 _log_action(i + 1, action, wait, comment)
                 logger.info("Restarting sequence execution")
@@ -947,14 +970,14 @@ def main():
                 with open(path, "r", encoding="utf-8") as f:
                     seq = f.readlines()
                 stop, run_done = execute_seq(seq)
+                if stop:
+                    break
                 if crisis:
                     if run_done:
                         logger.info("Seq completed")
                         break
                     reset_bad_crisis_run()
                 else:
-                    if stop:
-                        break
                     reset_after_score_attack_run(run_done)
 
         elif state == "record":
