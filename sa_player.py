@@ -407,7 +407,7 @@ The OCR has to 'see' the content of the game to determine what to do.""",
 
     click_boxes["retry_after_win"] = (
         client_left + 0.9 * client_width,
-        client_top + 0.95 * client_height,
+        client_top + 0.85 * client_height,
     )
     click_boxes["retry_in_pause"] = (
         client_left + 0.49 * client_width,
@@ -416,6 +416,10 @@ The OCR has to 'see' the content of the game to determine what to do.""",
     click_boxes["retry_in_pause_ok"] = (
         client_left + 0.6 * client_width,
         client_top + 0.8 * client_height,
+    )
+    click_boxes["retry_in_pause_ok_low"] = (
+        client_left + 0.6 * client_width,
+        client_top + 0.9 * client_height,
     )
     click_boxes["pause"] = (
         client_left + 0.95 * client_width,
@@ -867,7 +871,7 @@ def reset_after_score_attack_run(take_pic: bool):
     click("pause", "1")
     click("retry_in_pause", "1")
     click("retry_in_pause_ok", "1")
-    click("retry_in_pause_ok", "10")
+    click("retry_in_pause_ok_low", "10")
     _live_wait(10, "reset cooldown")
 
 
